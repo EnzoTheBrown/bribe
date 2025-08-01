@@ -2,6 +2,10 @@
 pub mod model;
 pub mod api;
 pub mod schema;
+pub mod settings;
+use crate::api::routes::event::{create_event, get_event_by_id, get_events};
+use crate::api::routes::login::login;
+use crate::api::routes::message::{create_message, get_messages};
 use crate::api::routes::user::{create_user, get_user_by_id, get_users};
 use actix_web::{middleware, web, App, HttpServer};
 use diesel::{prelude::*, r2d2};
@@ -38,6 +42,12 @@ async fn main() -> std::io::Result<()> {
             .service(get_users)
             .service(create_user)
             .service(get_user_by_id)
+            .service(get_events)
+            .service(create_event)
+            .service(get_event_by_id)
+            .service(login)
+            .service(get_messages)
+            .service(create_message)
     })
     .bind(("127.0.0.1", 8080))?
     .run()

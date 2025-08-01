@@ -1,9 +1,9 @@
+use crate::api::auth::get_user;
 use crate::api::utils::hash_password;
 use crate::model::{NewUser, User};
-use crate::schema::user::dsl::user;
-use crate::schema::user::dsl::*;
+use crate::schema::USERS::dsl::USERS;
 use crate::DbPool;
-use actix_web::{get, post, web, HttpResponse, Responder};
+use actix_web::{get, post, web, HttpRequest, HttpResponse, Responder};
 use argon2::password_hash::Error as ArgonError;
 use chrono::ParseError as ChronoParseError;
 use diesel::insert_into;
@@ -68,8 +68,12 @@ impl TryFrom<CreateUserPayload> for NewUser {
 }
 
 #[get("/users")]
-pub async fn get_users(pool: web::Data<DbPool>) -> impl Responder {
-    let users = user
+pub async fn get_users(pool: web::Data<DbPool>, req: HttpRequest) -> impl Responder {
+    get_user(pool, req).await.unwrap_or_else(|_| {
+        eprintln!("Failed to retrieve user from request");
+        HttpResponse::InternalServerError().body("Could not retrieve user")
+    });
+    let users = USERS
         .load::<User>(&mut pool.get().expect("Failed to get DB connection"))
         .expect("Error loading users");
     HttpResponse::Ok().json(users)
@@ -77,23 +81,12 @@ pub async fn get_users(pool: web::Data<DbPool>) -> impl Responder {
 
 #[get("/users/{user_id}")]
 pub async fn get_user_by_id(pool: web::Data<DbPool>, path: web::Path<i32>) -> impl Responder {
-    let pool = pool.clone();
-    let user_id = path.into_inner();
-    let result = web::block(move || -> Result<User, diesel::result::Error> {
-        let mut conn = pool
-            .get()
-            .map_err(|e| diesel::result::Error::SerializationError(Box::new(e)))?;
-        crate::schema::user::table
-            .filter(crate::schema::user::id.eq(Some(user_id)))
-            .first::<User>(&mut conn)
-    })
-    .await;
-    match result {
-        Ok(Ok(u)) => HttpResponse::Ok().json(u),
-        Ok(Err(e)) => {
-            eprintln!("DB error: {e:?}");
-            HttpResponse::InternalServerError().body("Could not retrieve user")
-        }
+    let user = User::get(&pool, path.to_owned()).await.map_err(|e| {
+        eprintln!("Database error: {e:?}");
+        HttpResponse::InternalServerError().body("Could not retrieve user")
+    });
+    match user {
+        Ok(u) => HttpResponse::Ok().json(u),
         Err(e) => {
             eprintln!("Blocking thread error: {e:?}");
             HttpResponse::InternalServerError().body("Could not retrieve user")
@@ -117,8 +110,7 @@ pub async fn create_user(
         let new_user: NewUser = payload
             .try_into()
             .map_err(|e| diesel::result::Error::SerializationError(Box::new(e)))?;
-
-        insert_into(user)
+        insert_into(USERS)
             .values(&new_user)
             .returning(User::as_returning())
             .get_result::<User>(&mut conn)

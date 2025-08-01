@@ -1,16 +1,18 @@
 // @generated automatically by Diesel CLI.
 
 diesel::table! {
-    event (id) {
+    EVENTS (id) {
         id -> Nullable<Integer>,
         date -> Date,
         description -> Text,
         person_id -> Integer,
+        title -> Nullable<Text>,
+        category -> Nullable<Text>,
     }
 }
 
 diesel::table! {
-    message (id) {
+    MESSAGES (id) {
         id -> Nullable<Integer>,
         event_id -> Integer,
         source -> Text,
@@ -19,7 +21,7 @@ diesel::table! {
 }
 
 diesel::table! {
-    user (id) {
+    USERS (id) {
         id -> Nullable<Integer>,
         full_name -> Text,
         birth_date -> Date,
@@ -29,6 +31,8 @@ diesel::table! {
     }
 }
 
-diesel::joinable!(message -> event (event_id));
-
-diesel::allow_tables_to_appear_in_same_query!(event, message, user,);
+diesel::allow_tables_to_appear_in_same_query!(
+    EVENTS,
+    MESSAGES,
+    USERS,
+);
