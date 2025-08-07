@@ -3,8 +3,8 @@ use crate::api::utils::verify_password;
 use crate::model::User;
 use crate::DbPool;
 use actix_web::{post, web, HttpResponse};
-use diesel::prelude::*;
 use diesel::result::Error as DieselError;
+use std::env;
 
 #[derive(serde::Deserialize)]
 pub struct LoginPayload {
@@ -29,6 +29,7 @@ pub async fn login(
     pool: web::Data<DbPool>,
     payload: web::Json<LoginPayload>,
 ) -> actix_web::Result<HttpResponse> {
+    let secret_key = env::var("SECRET_KEY").expect("SECRET_KEY should be set");
     let password = payload.password.clone();
     let user = get_user_by_email(&pool, &payload.email)
         .await
@@ -44,15 +45,13 @@ pub async fn login(
         log::error!("Password verification error: {e}");
         actix_web::error::ErrorInternalServerError("hash failure")
     })?;
-
     if !pw_ok {
         return Ok(HttpResponse::Unauthorized().finish());
     }
-    let token = generate_token(user_id, &user.email).map_err(|e| {
+    let token = generate_token(user_id, &user.email, &secret_key).map_err(|e| {
         log::error!("Token generation error: {e}");
         actix_web::error::ErrorInternalServerError("token failure")
     })?;
-
     let resp = LoginResponse {
         access_token: token,
         token_type: "Bearer".into(),

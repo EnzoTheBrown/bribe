@@ -1,11 +1,8 @@
-use crate::model::{Event, NewEvent};
-use crate::schema::EVENTS::dsl::EVENTS;
+use crate::model::{Event, NewEvent, User};
 use crate::DbPool;
-use actix_web::{get, post, web, HttpResponse, Responder};
+use actix_web::{delete, get, patch, post, web, HttpResponse, Responder};
 use argon2::password_hash::Error as ArgonError;
 use chrono::ParseError as ChronoParseError;
-use diesel::insert_into;
-use diesel::prelude::*;
 use std::{error::Error, fmt};
 
 #[derive(Debug)]
@@ -44,12 +41,20 @@ impl Error for PwError {
 }
 
 #[derive(serde::Deserialize)]
+pub struct InputEventPayload {
+    pub date: String,
+    pub title: Option<String>,
+    pub category: Option<String>,
+    pub description: String,
+}
+
+#[derive(serde::Deserialize)]
 pub struct CreateEventPayload {
     pub date: String,
     pub title: Option<String>,
     pub category: Option<String>,
     pub description: String,
-    pub person_id: i32,
+    pub user_id: i32,
 }
 
 impl TryFrom<CreateEventPayload> for NewEvent {
@@ -58,7 +63,7 @@ impl TryFrom<CreateEventPayload> for NewEvent {
         Ok(NewEvent {
             date: p.date.parse().map_err(PwError::ParseError)?,
             description: p.description,
-            person_id: p.person_id,
+            user_id: p.user_id,
             title: p.title,
             category: p.category,
         })
@@ -66,21 +71,28 @@ impl TryFrom<CreateEventPayload> for NewEvent {
 }
 
 #[get("/events")]
-pub async fn get_events(pool: web::Data<DbPool>) -> impl Responder {
-    let events = EVENTS
-        .select(Event::as_select())
-        .load::<Event>(&mut pool.get().expect("Failed to get DB connection"))
-        .expect("Error loading users");
+pub async fn get_events(pool: web::Data<DbPool>, user: web::ReqData<User>) -> impl Responder {
+    let user = user.into_inner();
+    let events = Event::get_by_user(&pool, user.id.expect("User ID not found"))
+        .await
+        .expect("Filed to retrieve events");
     HttpResponse::Ok().json(events)
 }
 
 #[get("/events/{event_id}")]
-pub async fn get_event_by_id(pool: web::Data<DbPool>, event_id: web::Path<i32>) -> impl Responder {
+pub async fn get_event_by_id(
+    pool: web::Data<DbPool>,
+    event_id: web::Path<i32>,
+    user: web::ReqData<User>,
+) -> impl Responder {
     let event_id = event_id.into_inner();
-    let result = Event::get(&pool, event_id).await.map_err(|e| {
-        eprintln!("Database error: {e}");
-        HttpResponse::InternalServerError().body("Could not retrieve event")
-    });
+    let user = user.into_inner();
+    let result = Event::get(&pool, user.id.expect("User ID not found"), event_id)
+        .await
+        .map_err(|e| {
+            eprintln!("Database error: {e}");
+            HttpResponse::InternalServerError().body("Could not retrieve event")
+        });
     match result {
         Ok(ev) => HttpResponse::Ok().json(ev),
         Err(e) => {
@@ -93,35 +105,103 @@ pub async fn get_event_by_id(pool: web::Data<DbPool>, event_id: web::Path<i32>) 
 #[post("/events")]
 pub async fn create_event(
     pool: web::Data<DbPool>,
-    payload: web::Json<CreateEventPayload>,
+    payload: web::Json<InputEventPayload>,
+    user: web::ReqData<User>,
 ) -> impl Responder {
-    let pool = pool.clone();
+    let user = user.into_inner();
     let payload = payload.into_inner();
-
-    let result = web::block(move || -> Result<Event, diesel::result::Error> {
-        let mut conn = pool
-            .get()
-            .map_err(|e| diesel::result::Error::SerializationError(Box::new(e)))?;
-
-        let new_event: NewEvent = payload
-            .try_into()
-            .map_err(|e| diesel::result::Error::SerializationError(Box::new(e)))?;
-
-        insert_into(EVENTS)
-            .values(&new_event)
-            .returning(Event::as_returning())
-            .get_result::<Event>(&mut conn)
-    })
-    .await;
-    match result {
-        Ok(Ok(u)) => HttpResponse::Created().json(u),
-        Ok(Err(e)) => {
-            eprintln!("DB error: {e:?}");
-            HttpResponse::InternalServerError().body("Could not create event")
+    let payload = CreateEventPayload {
+        date: payload.date,
+        title: payload.title,
+        category: payload.category,
+        description: payload.description,
+        user_id: user.id.expect("User ID not found"),
+    };
+    let new_event = match payload.try_into() {
+        Ok(event) => event,
+        Err(e) => {
+            eprintln!("Error creating event: {e}");
+            return HttpResponse::BadRequest().body("Invalid event data");
         }
+    };
+    let event = Event::create(&pool, new_event, user.id.expect("User ID not found"))
+        .await
+        .map_err(|e| {
+            eprintln!("Database error: {e}");
+            HttpResponse::InternalServerError().body("Could not create event")
+        });
+    match event {
+        Ok(ev) => HttpResponse::Created().json(ev),
         Err(e) => {
             eprintln!("Blocking thread error: {e:?}");
             HttpResponse::InternalServerError().body("Could not create event")
+        }
+    }
+}
+
+#[patch("/events/{event_id}")]
+pub async fn update_event(
+    pool: web::Data<DbPool>,
+    event_id: web::Path<i32>,
+    payload: web::Json<InputEventPayload>,
+    user: web::ReqData<User>,
+) -> impl Responder {
+    let event_id = event_id.into_inner();
+    let user = user.into_inner();
+    let payload = payload.into_inner();
+    let payload = CreateEventPayload {
+        date: payload.date,
+        title: payload.title,
+        category: payload.category,
+        description: payload.description,
+        user_id: user.id.expect("User ID not found"),
+    };
+    let updated_event = match payload.try_into() {
+        Ok(event) => event,
+        Err(e) => {
+            eprintln!("Error updating event: {e}");
+            return HttpResponse::BadRequest().body("Invalid event data");
+        }
+    };
+    let result = Event::update(
+        &pool,
+        user.id.expect("User ID not found"),
+        event_id,
+        updated_event,
+    )
+    .await
+    .map_err(|e| {
+        eprintln!("Database error: {e}");
+        HttpResponse::InternalServerError().body("Could not update event")
+    });
+    match result {
+        Ok(ev) => HttpResponse::Ok().json(ev),
+        Err(e) => {
+            eprintln!("Blocking thread error: {e:?}");
+            HttpResponse::InternalServerError().body("Could not update event")
+        }
+    }
+}
+
+#[delete("/events/{event_id}")]
+pub async fn delete_event(
+    pool: web::Data<DbPool>,
+    event_id: web::Path<i32>,
+    user: web::ReqData<User>,
+) -> impl Responder {
+    let event_id = event_id.into_inner();
+    let user = user.into_inner();
+    let result = Event::delete(&pool, user.id.expect("User ID not found"), event_id)
+        .await
+        .map_err(|e| {
+            eprintln!("Database error: {e}");
+            HttpResponse::InternalServerError().body("Could not delete event")
+        });
+    match result {
+        Ok(_) => HttpResponse::NoContent().finish(),
+        Err(e) => {
+            eprintln!("Blocking thread error: {e:?}");
+            HttpResponse::InternalServerError().body("Could not delete event")
         }
     }
 }

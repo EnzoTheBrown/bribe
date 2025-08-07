@@ -1,11 +1,11 @@
 use crate::schema::{EVENTS, MESSAGES, USERS};
-use actix_web::{error::BlockingError, get, post, web, HttpResponse, Responder};
+use actix_web::web;
 use diesel::prelude::*;
 use diesel::result::Error as DieselError;
 use diesel::sqlite::Sqlite;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Queryable, Serialize, Deserialize, Selectable)]
+#[derive(Debug, Queryable, Serialize, Deserialize, Selectable, Clone)]
 #[diesel(table_name = USERS)]
 #[diesel(check_for_backend(Sqlite))]
 pub struct User {
@@ -67,32 +67,83 @@ pub struct NewUser {
 #[diesel(check_for_backend(Sqlite))]
 pub struct Event {
     pub id: Option<i32>,
+    pub date: chrono::NaiveDate,
     pub title: Option<String>,
     pub category: Option<String>,
-    pub date: chrono::NaiveDate,
     pub description: String,
-    pub person_id: i32,
+    pub user_id: i32,
 }
 
 impl Event {
-    pub async fn get(pool: &crate::DbPool, id: i32) -> Result<Self, diesel::result::Error> {
-        let pool = pool.clone();
-        let id = id.to_owned();
-        let event = web::block(move || {
-            let mut conn = pool
-                .get()
-                .map_err(|e| diesel::result::Error::SerializationError(Box::new(e)))?;
-            EVENTS::table
-                .filter(EVENTS::id.eq(id))
-                .select(Event::as_select())
-                .first::<Event>(&mut conn)
-        })
-        .await
-        .map_err(|e| {
-            log::error!("Blocking thread error: {e}");
-            DieselError::NotFound
-        })??;
-        Ok(event)
+    pub async fn get(
+        pool: &crate::DbPool,
+        event_user_id: i32,
+        event_id: i32,
+    ) -> Result<Self, diesel::result::Error> {
+        use crate::schema::EVENTS::dsl::*;
+        let conn = &mut pool.get().unwrap();
+        let result = EVENTS
+            .filter(id.eq(event_id).and(user_id.eq(event_user_id)))
+            .first::<Self>(conn)?;
+        Ok(result)
+    }
+    pub async fn get_by_user(
+        pool: &crate::DbPool,
+        event_user_id: i32,
+    ) -> Result<Vec<Self>, diesel::result::Error> {
+        use crate::schema::EVENTS::dsl::*;
+        let conn = &mut pool.get().unwrap();
+        let result = EVENTS
+            .filter(user_id.eq(event_user_id))
+            .load::<Self>(conn)?;
+        Ok(result)
+    }
+    pub async fn create(
+        pool: &crate::DbPool,
+        new_event: NewEvent,
+        event_user_id: i32,
+    ) -> Result<Self, diesel::result::Error> {
+        use crate::schema::EVENTS::dsl::*;
+        let conn = &mut pool.get().unwrap();
+        let new_event = NewEvent {
+            user_id: event_user_id,
+            ..new_event
+        };
+        let result = diesel::insert_into(EVENTS)
+            .values(&new_event)
+            .returning(Event::as_returning())
+            .get_result(conn)?;
+        Ok(result)
+    }
+    pub async fn delete(
+        pool: &crate::DbPool,
+        event_user_id: i32,
+        event_id: i32,
+    ) -> Result<usize, diesel::result::Error> {
+        use crate::schema::EVENTS::dsl::*;
+        let conn = &mut pool.get().unwrap();
+        let result = diesel::delete(EVENTS.filter(id.eq(event_id).and(user_id.eq(event_user_id))))
+            .execute(conn)?;
+        Ok(result)
+    }
+    pub async fn update(
+        pool: &crate::DbPool,
+        event_user_id: i32,
+        event_id: i32,
+        updated_event: NewEvent,
+    ) -> Result<Self, diesel::result::Error> {
+        use crate::schema::EVENTS::dsl::*;
+        let conn = &mut pool.get().unwrap();
+        let result = diesel::update(EVENTS.filter(id.eq(event_id).and(user_id.eq(event_user_id))))
+            .set((
+                title.eq(updated_event.title),
+                category.eq(updated_event.category),
+                description.eq(updated_event.description),
+                date.eq(updated_event.date),
+            ))
+            .returning(Event::as_returning())
+            .get_result(conn)?;
+        Ok(result)
     }
 }
 
@@ -101,7 +152,7 @@ impl Event {
 pub struct NewEvent {
     pub date: chrono::NaiveDate,
     pub description: String,
-    pub person_id: i32,
+    pub user_id: i32,
     pub title: Option<String>,
     pub category: Option<String>,
 }
@@ -137,6 +188,44 @@ impl Message {
             DieselError::NotFound
         })??;
         Ok(messages)
+    }
+    pub async fn create(
+        pool: &crate::DbPool,
+        new_message: NewMessage,
+    ) -> Result<Self, diesel::result::Error> {
+        use crate::schema::MESSAGES::dsl::*;
+        let conn = &mut pool.get().unwrap();
+        let result = diesel::insert_into(MESSAGES)
+            .values(&new_message)
+            .returning(Message::as_returning())
+            .get_result(conn)?;
+        Ok(result)
+    }
+    pub async fn delete(
+        pool: &crate::DbPool,
+        message_id: i32,
+    ) -> Result<usize, diesel::result::Error> {
+        use crate::schema::MESSAGES::dsl::*;
+        let conn = &mut pool.get().unwrap();
+        let result = diesel::delete(MESSAGES.filter(id.eq(message_id))).execute(conn)?;
+        Ok(result)
+    }
+    pub async fn update(
+        pool: &crate::DbPool,
+        message_id: i32,
+        updated_message: NewMessage,
+    ) -> Result<Self, diesel::result::Error> {
+        use crate::schema::MESSAGES::dsl::*;
+        let conn = &mut pool.get().unwrap();
+        let result = diesel::update(MESSAGES.filter(id.eq(message_id)))
+            .set((
+                event_id.eq(updated_message.event_id),
+                source.eq(updated_message.source),
+                content.eq(updated_message.content),
+            ))
+            .returning(Message::as_returning())
+            .get_result(conn)?;
+        Ok(result)
     }
 }
 

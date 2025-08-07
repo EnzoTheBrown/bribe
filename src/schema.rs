@@ -4,10 +4,10 @@ diesel::table! {
     EVENTS (id) {
         id -> Nullable<Integer>,
         date -> Date,
-        description -> Text,
-        person_id -> Integer,
         title -> Nullable<Text>,
         category -> Nullable<Text>,
+        description -> Text,
+        user_id -> Integer,
     }
 }
 
@@ -31,8 +31,4 @@ diesel::table! {
     }
 }
 
-diesel::allow_tables_to_appear_in_same_query!(
-    EVENTS,
-    MESSAGES,
-    USERS,
-);
+diesel::allow_tables_to_appear_in_same_query!(EVENTS, MESSAGES, USERS,);

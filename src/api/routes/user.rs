@@ -1,9 +1,8 @@
-use crate::api::auth::get_user;
 use crate::api::utils::hash_password;
 use crate::model::{NewUser, User};
 use crate::schema::USERS::dsl::USERS;
 use crate::DbPool;
-use actix_web::{get, post, web, HttpRequest, HttpResponse, Responder};
+use actix_web::{get, post, web, HttpResponse, Responder};
 use argon2::password_hash::Error as ArgonError;
 use chrono::ParseError as ChronoParseError;
 use diesel::insert_into;
@@ -67,16 +66,10 @@ impl TryFrom<CreateUserPayload> for NewUser {
     }
 }
 
-#[get("/users")]
-pub async fn get_users(pool: web::Data<DbPool>, req: HttpRequest) -> impl Responder {
-    get_user(pool, req).await.unwrap_or_else(|_| {
-        eprintln!("Failed to retrieve user from request");
-        HttpResponse::InternalServerError().body("Could not retrieve user")
-    });
-    let users = USERS
-        .load::<User>(&mut pool.get().expect("Failed to get DB connection"))
-        .expect("Error loading users");
-    HttpResponse::Ok().json(users)
+#[get("/me")]
+pub async fn get_me(user: web::ReqData<User>) -> impl Responder {
+    let user = user.into_inner();
+    HttpResponse::Ok().json(user)
 }
 
 #[get("/users/{user_id}")]

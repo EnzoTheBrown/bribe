@@ -13,8 +13,8 @@ CREATE TABLE EVENTS (
 	id INTEGER PRIMARY KEY AUTOINCREMENT,
 	date DATE NOT NULL,
 	description TEXT NOT NULL,
-	person_id INT NOT NULL,
-	FOREIGN KEY (person_id) REFERENCES USER(id) ON DELETE CASCADE ON UPDATE CASCADE
+	user_id INT NOT NULL,
+	FOREIGN KEY (user_id) REFERENCES USER(id) ON DELETE CASCADE ON UPDATE CASCADE
 );
 
 
@@ -30,8 +30,8 @@ INSERT INTO users (full_name, birth_date, email, hashed_password, lang)
 SELECT full_name, birth_date, email, hashed_password, lang FROM user;
 
 DROP TABLE user;
-INSERT into events (date, description, person_id)
-SELECT date, description, person_id FROM event;
+INSERT into events (date, description, user_id)
+SELECT date, description, user_id FROM event;
 
 DROP TABLE event;
 
