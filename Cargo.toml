@@ -21,3 +21,7 @@ hmac = "0.12.1"
 sha2 = "0.10.9"
 jsonwebtoken = "9.3.1"
 actix-web-httpauth = "0.8.2"
+agentai = "0.1.5"
+schemars = { version = "=0.9.0", features = ["derive"] }
+strum_macros = "0.27.2"
+strum = "0.27.2"

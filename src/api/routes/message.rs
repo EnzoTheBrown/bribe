@@ -136,7 +136,6 @@ pub async fn update_message(
     let (event_id, message_id) = param.into_inner();
     let user = user.into_inner();
     let payload = payload.into_inner();
-
     match Event::get(&pool, user.id.expect("User ID must be set"), event_id).await {
         Ok(_) => {
             let updated_message = NewMessage {
@@ -167,7 +166,6 @@ pub async fn delete_message(
 ) -> impl Responder {
     let (event_id, message_id) = param.into_inner();
     let user = user.into_inner();
-
     match Event::get(&pool, user.id.expect("User ID must be set"), event_id).await {
         Ok(_) => match Message::delete(&pool, message_id).await {
             Ok(_) => HttpResponse::NoContent().finish(),

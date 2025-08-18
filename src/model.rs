@@ -180,6 +180,7 @@ impl Message {
                 .map_err(|e| diesel::result::Error::SerializationError(Box::new(e)))?;
             MESSAGES::table
                 .filter(MESSAGES::event_id.eq(event_id))
+                .order(MESSAGES::id.asc())
                 .load::<Message>(&mut conn)
         })
         .await

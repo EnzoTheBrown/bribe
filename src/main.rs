@@ -1,6 +1,10 @@
 #[macro_use]
-pub mod model;
+extern crate strum;
+extern crate strum_macros;
+pub mod ai;
 pub mod api;
+pub mod event;
+pub mod model;
 pub mod schema;
 pub mod settings;
 use crate::api::auth::bearer_validator;
@@ -27,8 +31,8 @@ fn initialize_db_pool() -> DbPool {
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
-    let settings = get_settings();
     dotenvy::dotenv().ok();
+    let settings = get_settings();
     env_logger::init_from_env(env_logger::Env::new().default_filter_or("info"));
     let pool = initialize_db_pool();
     log::info!("starting HTTP server at http://localhost:8080");

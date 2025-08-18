@@ -1,4 +1,8 @@
-use crate::model::{Event, NewEvent, User};
+use crate::ai::agent::{
+    ask_question_agent, categorize_with_agent, init_categorize_event_agent, init_conversation_agent,
+};
+use crate::event::EventCategory;
+use crate::model::{Event, Message, NewEvent, NewMessage, User};
 use crate::DbPool;
 use actix_web::{delete, get, patch, post, web, HttpResponse, Responder};
 use argon2::password_hash::Error as ArgonError;
@@ -41,10 +45,17 @@ impl Error for PwError {
 }
 
 #[derive(serde::Deserialize)]
+pub struct PatchEventPayload {
+    pub date: String,
+    pub title: Option<String>,
+    pub description: String,
+    pub category: Option<String>,
+}
+
+#[derive(serde::Deserialize)]
 pub struct InputEventPayload {
     pub date: String,
     pub title: Option<String>,
-    pub category: Option<String>,
     pub description: String,
 }
 
@@ -102,6 +113,30 @@ pub async fn get_event_by_id(
     }
 }
 
+async fn ask_question(
+    pool: &web::Data<DbPool>,
+    event_id: i32,
+    event_name: &str,
+    description: &str,
+    date: &str,
+) {
+    let mut agent = init_conversation_agent();
+    let question = ask_question_agent(&mut agent, event_name, description, date, Vec::new())
+        .await
+        .expect("Failed to ask question");
+    println!("Question: {}", question);
+    Message::create(
+        &pool,
+        NewMessage {
+            event_id: event_id,
+            source: "bot".to_string(),
+            content: question,
+        },
+    )
+    .await
+    .expect("Failed to create message");
+}
+
 #[post("/events")]
 pub async fn create_event(
     pool: web::Data<DbPool>,
@@ -109,29 +144,50 @@ pub async fn create_event(
     user: web::ReqData<User>,
 ) -> impl Responder {
     let user = user.into_inner();
-    let payload = payload.into_inner();
-    let payload = CreateEventPayload {
-        date: payload.date,
-        title: payload.title,
-        category: payload.category,
-        description: payload.description,
-        user_id: user.id.expect("User ID not found"),
+    let user_id = user.id.expect("User ID not found");
+    let input = payload.into_inner();
+    let title: String = input.title.unwrap_or_default();
+    let description: String = input.description.clone();
+    let date: String = input.date.clone();
+    let mut agent = init_categorize_event_agent();
+    let category = match categorize_with_agent(&mut agent, &title, &description, &date).await {
+        Ok(cat) => cat,
+        Err(e) => {
+            eprintln!("Error categorizing event: {e}");
+            EventCategory::Unknown
+        }
     };
-    let new_event = match payload.try_into() {
+    let create_payload = CreateEventPayload {
+        date: date.clone(),
+        title: Some(title.clone()),
+        category: Some(category.to_string()),
+        description: description.clone(),
+        user_id,
+    };
+    let new_event = match create_payload.try_into() {
         Ok(event) => event,
         Err(e) => {
             eprintln!("Error creating event: {e}");
             return HttpResponse::BadRequest().body("Invalid event data");
         }
     };
-    let event = Event::create(&pool, new_event, user.id.expect("User ID not found"))
-        .await
-        .map_err(|e| {
-            eprintln!("Database error: {e}");
-            HttpResponse::InternalServerError().body("Could not create event")
-        });
+    let event = Event::create(&pool, new_event, user_id).await.map_err(|e| {
+        eprintln!("Database error: {e}");
+        HttpResponse::InternalServerError().body("Could not create event")
+    });
+
     match event {
-        Ok(ev) => HttpResponse::Created().json(ev),
+        Ok(ev) => {
+            ask_question(
+                &pool,
+                ev.id.expect("Expect event ID"),
+                &title,
+                &description,
+                &date,
+            )
+            .await;
+            HttpResponse::Created().json(ev)
+        }
         Err(e) => {
             eprintln!("Blocking thread error: {e:?}");
             HttpResponse::InternalServerError().body("Could not create event")
@@ -143,7 +199,7 @@ pub async fn create_event(
 pub async fn update_event(
     pool: web::Data<DbPool>,
     event_id: web::Path<i32>,
-    payload: web::Json<InputEventPayload>,
+    payload: web::Json<PatchEventPayload>,
     user: web::ReqData<User>,
 ) -> impl Responder {
     let event_id = event_id.into_inner();
